@@ -93,5 +93,8 @@ jobs:
           VID: ${{ secrets.VeracodeID }} # Lembrar de criar as credenciais no Secrets
           VKEY: ${{ secrets.VeracodeKey }}
           CaminhoArquivo: './veracode.zip'
+          VeracodePolicyName: 'Veracode - Credentials'
         run: |
+          ls
+          veracodePolicyFile=$(echo "$VeracodePolicyName" | sed 's/ /_/g')
           java -jar pipeline-scan.jar -vid $VID -vkey $VKEY -f $CaminhoArquivo --issue_details true -pf $veracodePolicyFile.json
