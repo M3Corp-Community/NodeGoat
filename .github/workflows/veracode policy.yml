@@ -1,6 +1,6 @@
 name: Veracode_Policy
 on:
-  push
+  workflow_dispatch:
 
 jobs:
   Package:
@@ -87,7 +87,7 @@ jobs:
           curl -sSO https://downloads.veracode.com/securityscan/pipeline-scan-LATEST.zip
           unzip pipeline-scan-LATEST.zip
           java -jar pipeline-scan.jar -vid $VID -vkey $VKEY -rp="$VeracodePolicyName"
-          veracodePolicyFile=$(echo "$VeracodePolicyName" | sed 's/ /_/g') + '.json'
+          veracodePolicyFile=$(echo "$VeracodePolicyName" | sed 's/ /_/g')
           export $veracodePolicyFile
       - name: Veracode Pipeline Scan
         env:
