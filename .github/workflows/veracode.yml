@@ -36,6 +36,7 @@ jobs:
         env:
           SRCCLR_API_TOKEN: ${{ secrets.SCA }} # Lembrar de criar as credenciais no Secrets
         run: |
+          export SRCCLR_Scope = "development"
           curl -sSL 'https://download.sourceclear.com/ci.sh' | bash -s – scan --update-advisor --allow-dirty --scope dev
 
   Veracode_UploadAndScan:
