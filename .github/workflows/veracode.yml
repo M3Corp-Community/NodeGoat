@@ -67,7 +67,7 @@ jobs:
     needs: Package
     steps:
       - name: Download Artefato
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v4
         with:
           name: pacoteVeracode
       - name: Veracode Pipeline Scan
