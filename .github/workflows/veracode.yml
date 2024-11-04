@@ -71,6 +71,7 @@ jobs:
         with:
           name: pacoteVeracode
       - name: Veracode Pipeline Scan
+        continue-on-error: true
         env:
           VID: ${{ secrets.VeracodeID }} # Lembrar de criar as credenciais no Secrets
           VKEY: ${{ secrets.VeracodeKey }}

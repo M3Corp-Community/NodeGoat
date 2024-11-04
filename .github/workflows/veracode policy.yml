@@ -47,7 +47,7 @@ jobs:
           vkey: '$VeracodeKey'
           criticality: 'VeryHigh'
           appname: '$AppName'
-          createsandbox: true
+          scantimeout: 30
           filepath: 'veracode.zip'
           version: ${{ github.run_id }}
 
