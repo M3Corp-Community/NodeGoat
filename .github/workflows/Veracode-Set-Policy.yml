@@ -18,7 +18,7 @@ jobs:
         run: |
           # Obtem as informacoes do projeto
           INFO=$(java -jar veracode-wrapper.jar -vid $VID -vkey $VKEY -action GetAppList)
-          appID=$(echo "$INFO" | sed -n 's/.*app_id="\([0-9]*\)".*app_name="'$veracodeAppProfile'".*/\1/p')
+          appID=$(echo "$INFO" | sed -n "s/.*app_id=\"\([0-9]*\)\".*app_name=\"$(printf '%s' "$veracodeAppProfile")\".*/\1/p")
 
           # Verifica se o appID foi extraido corretamente
           if [ -n "$appID" ]; then
