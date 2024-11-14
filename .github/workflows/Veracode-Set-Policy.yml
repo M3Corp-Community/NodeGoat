@@ -6,25 +6,23 @@ jobs:
   Veracode:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+      
       - name: Download Veracode Wrapper
         run: |
           curl -o veracode-wrapper.jar https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/23.4.11.2/vosp-api-wrappers-java-23.4.11.2.jar
-      - name: Veracode - Set Policy
-        env:
-          VID: ${{ secrets.VeracodeID }} # Lembrar de criar as credenciais no Secrets
-          VKEY: ${{ secrets.VeracodeKey }}
-          veracodeAppProfile: Github - ${{ github.repository }}
-          veracodePolicy: ${{ secrets.veracodePolicy }}
-        run: |
-          # Obtem as informacoes do projeto
-          INFO=$(java -jar veracode-wrapper.jar -vid $VID -vkey $VKEY -action GetAppList)
-          appID=$(echo "$INFO" | awk -v profile="$veracodeAppProfile" -F 'app_id="|"' '$0 ~ "app_name=\"" profile "\"" {print $2; exit}')
 
-          # Verifica se o appID foi extraido corretamente
-          if [ -n "$appID" ]; then
-            # Faz a edicao
-            java -jar veracode-wrapper.jar -vid $VID -vkey $VKEY -action updateapp -appid $appID -policy "$veracodePolicy"
-            echo "Add $veracodeAppProfile (ID: $appID) in Policy $veracodePolicy"
-          else
-            echo "App ID não encontrado para o perfil $veracodeAppProfile"
-          fi
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Run Veracode Update Script
+        env:
+          VERACODE_APP_PROFILE: Github - ${{ github.repository }}
+          VERACODE_POLICY: ${{ secrets.veracodePolicy }}
+          VID: ${{ secrets.VeracodeID }}
+          VKEY: ${{ secrets.VeracodeKey }}
+        run: |
+          python update_policy.py "$VERACODE_APP_PROFILE" "$VERACODE_POLICY"
