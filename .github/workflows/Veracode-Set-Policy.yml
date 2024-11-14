@@ -25,4 +25,4 @@ jobs:
           VID: ${{ secrets.VeracodeID }}
           VKEY: ${{ secrets.VeracodeKey }}
         run: |
-          python setPolicy.py "$VERACODE_APP_PROFILE" "Politica atender OWASP e PCI"
+          python setPolicy.py "Github Actions - M3Corp-Community/NodeGoat-JS" "Politica atender OWASP e PCI"
