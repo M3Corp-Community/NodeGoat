@@ -20,7 +20,7 @@ jobs:
 
       - name: Run Veracode Update Script
         env:
-          VERACODE_APP_PROFILE: Github - ${{ github.repository }}
+          VERACODE_APP_PROFILE: Github Actions - ${{ github.repository }}
           VERACODE_POLICY: ${{ secrets.veracodePolicy }}
           VID: ${{ secrets.VeracodeID }}
           VKEY: ${{ secrets.VeracodeKey }}
