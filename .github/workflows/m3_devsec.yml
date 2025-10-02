@@ -42,13 +42,12 @@ jobs:
   Devici_CodeGenius:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v2
       - name: Devici CodeGenius
         uses: Devici-ThreatModel/code-genius-action@latest
         env:
             CG_CLIENT_ID: ${{ secrets.CG_CLIENT_ID }}
             CG_CLIENT_SECRET: ${{ secrets.CG_CLIENT_SECRET }}
-        with:
-          path: "."
 
   Veracode_UploadAndScan:
     runs-on: ubuntu-latest
