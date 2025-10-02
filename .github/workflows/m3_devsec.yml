@@ -47,6 +47,8 @@ jobs:
         env:
             CG_CLIENT_ID: ${{ secrets.CG_CLIENT_ID }}
             CG_CLIENT_SECRET: ${{ secrets.CG_CLIENT_SECRET }}
+        with:
+          path: "."
 
   Veracode_UploadAndScan:
     runs-on: ubuntu-latest
