@@ -40,12 +40,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          metadata_url="https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/maven-metadata.xml"
-          version="$(curl --fail --silent --show-error --location "$metadata_url" | sed -n 's:.*<latest>\([^<]*\)</latest>.*:\1:p')"
-          test -n "$version"
+          version="26.10.20.1"
+          distribution="https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/$version/vosp-api-wrappers-java-$version-dist.zip"
           curl --fail --silent --show-error --location \
-            --output veracode-wrapper.jar \
-            "https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/$version/vosp-api-wrappers-java-$version.jar"
+            --output veracode-wrapper-dist.zip \
+            "$distribution"
+          mkdir -p veracode-wrapper
+          unzip -q veracode-wrapper-dist.zip -d veracode-wrapper
+          wrapper_jar="$(find veracode-wrapper -type f -name 'vosp-api-wrapper-java*.jar' -print -quit)"
+          test -n "$wrapper_jar"
+          java -jar "$wrapper_jar" -wrapperversion
+          echo "VERACODE_WRAPPER_JAR=$wrapper_jar" >> "$GITHUB_ENV"
 
       - name: Verificar limite e rotacionar sandbox
         env:
@@ -62,7 +67,7 @@ jobs:
           import time
           import xml.etree.ElementTree as ET
 
-          wrapper = "veracode-wrapper.jar"
+          wrapper = os.environ["VERACODE_WRAPPER_JAR"]
           vid = os.environ["VERACODE_API_ID"].strip()
           vkey = os.environ["VERACODE_API_KEY"].strip()
           app_name = os.environ["APP_NAME"]
