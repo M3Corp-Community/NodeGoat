@@ -29,8 +29,8 @@ jobs:
 
       - name: Verificar limite de Sandboxes e promover a mais antiga
         env:
-          VERACODE_API_ID: ${{ secrets.VeracodeID }}
-          VERACODE_API_KEY: ${{ secrets.VeracodeKey }}
+          VERACODE_API_KEY_ID: ${{ secrets.VERACODEID }}
+          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODEKEY }}
         run: |
           pip install requests veracode-api-signing -q
           python3 - << 'EOF'
@@ -104,8 +104,8 @@ jobs:
       - name: UploadAndScan SBs
         uses: veracode/veracode-uploadandscan-action@master
         with:
-          vid: ${{ secrets.VeracodeID }}
-          vkey: ${{ secrets.VeracodeKey }}
+          vid: ${{ secrets.VERACODEID }}
+          vkey: ${{ secrets.VERACODEKEY }}
           appname: ${{ env.APP_NAME }}
           createprofile: true
           criticality: 'VeryHigh'
