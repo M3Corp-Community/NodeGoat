@@ -48,12 +48,15 @@ jobs:
           test -s veracode-wrapper.jar
           java -jar veracode-wrapper.jar -wrapperversion
 
-      - name: Conferir limite de sandboxes
+      - name: Preencher sandboxes de teste até o limite
         env:
           VERACODE_API_ID: ${{ secrets.VERACODE_API_ID }}
           VERACODE_API_KEY: ${{ secrets.VERACODE_API_KEY }}
           APP_NAME: ${{ env.APP_NAME }}
           SANDBOX_LIMIT: ${{ env.SANDBOX_LIMIT }}
+          PACKAGE_PATH: ${{ env.PACKAGE_PATH }}
+          SANDBOX_PREFIX: ${{ inputs.sandbox_name || format('rotation-test-{0}', github.run_number) }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           python3 - <<'PY'
           import os
@@ -82,20 +85,35 @@ jobs:
           if app is None:
               sys.exit(f"Perfil '{os.environ['APP_NAME']}' não encontrado; nenhum scan foi enviado.")
           sandboxes = elements(call("getsandboxlist", appid=app.get("app_id")), "sandbox")
-          count = len(sandboxes)
-          print(f"Sandboxes atuais: {count}/{os.environ['SANDBOX_LIMIT']}")
-          if count >= int(os.environ["SANDBOX_LIMIT"]):
-              sys.exit("Limite de teste atingido; nenhum scan foi enviado.")
-          PY
+          current = len(sandboxes)
+          limit = int(os.environ["SANDBOX_LIMIT"])
+          missing = max(0, limit - current)
+          print(f"Sandboxes atuais: {current}/{limit}; serão enviados {missing} scans.", flush=True)
 
-      - name: UploadAndScan na sandbox de teste
-        uses: veracode/veracode-uploadandscan-action@master
-        with:
-          vid: ${{ secrets.VERACODE_API_ID }}
-          vkey: ${{ secrets.VERACODE_API_KEY }}
-          appname: ${{ env.APP_NAME }}
-          createsandbox: true
-          sandboxname: ${{ inputs.sandbox_name || format('rotation-test-{0}', github.run_number) }}
-          filepath: ${{ env.PACKAGE_PATH }}
-          deleteincompletescan: 0
-          version: ${{ github.run_id }}
+          for index in range(1, missing + 1):
+              sandbox_name = f"{os.environ['SANDBOX_PREFIX']}-{index}"
+              version = f"rotation-test-{os.environ['RUN_ID']}-{index}"
+              print(f"Enviando scan {index}/{missing} para '{sandbox_name}'.", flush=True)
+              result = subprocess.run(
+                  [
+                      "java", "-jar", "veracode-wrapper.jar",
+                      "-vid", os.environ["VERACODE_API_ID"],
+                      "-vkey", os.environ["VERACODE_API_KEY"],
+                      "-action", "uploadandscan",
+                      "-appname", os.environ["APP_NAME"],
+                      "-createprofile", "true",
+                      "-createsandbox", "true",
+                      "-sandboxname", sandbox_name,
+                      "-filepath", os.environ["PACKAGE_PATH"],
+                      "-deleteincompletescan", "0",
+                      "-version", version,
+                  ],
+                  text=True,
+                  capture_output=True,
+              )
+              if result.stdout:
+                  print(result.stdout.strip(), flush=True)
+              if result.returncode != 0 or "<error" in result.stdout.lower():
+                  detail = (result.stderr or result.stdout or "sem detalhes").strip()
+                  sys.exit(f"UploadAndScan falhou para '{sandbox_name}': {detail}")
+          PY
