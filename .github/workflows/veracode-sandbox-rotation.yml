@@ -49,17 +49,14 @@ jobs:
               print("ERRO: Secrets VERACODE_API_ID ou VERACODE_API_KEY estão vazios ou inacessíveis.", file=sys.stderr)
               sys.exit(1)
 
-          os.environ["VERACODE_API_KEY_ID"] = vid
-          os.environ["VERACODE_API_KEY_SECRET"] = vkey
-
           app_name = os.environ["APP_NAME"]
           base_url = "https://api.veracode.com/appsec/v1"
-          auth = RequestsAuthPluginVeracodeHMAC()
+          auth = RequestsAuthPluginVeracodeHMAC(vid, vkey)
 
           # 1. Consultar se o Application Profile já existe
           resp = requests.get(f"{base_url}/applications", params={"name": app_name}, auth=auth, timeout=30)
           if resp.status_code == 401:
-              print("ERRO 401 Unauthorized: Verifique se a chave da Veracode é válida ou se a região da conta é EU/US.", file=sys.stderr)
+              print(f"ERRO 401 em api.veracode.com. Resposta da Veracode: {resp.text[:1000]}", file=sys.stderr)
               sys.exit(1)
           resp.raise_for_status()
 
@@ -102,9 +99,9 @@ jobs:
           import requests
           from veracode_api_signing.plugin_requests import RequestsAuthPluginVeracodeHMAC
 
-          os.environ["VERACODE_API_KEY_ID"] = os.environ["VERACODE_API_ID"].strip()
-          os.environ["VERACODE_API_KEY_SECRET"] = os.environ["VERACODE_API_KEY"].strip()
-          if not os.environ["VERACODE_API_KEY_ID"] or not os.environ["VERACODE_API_KEY_SECRET"]:
+          vid = os.environ["VERACODE_API_ID"].strip()
+          vkey = os.environ["VERACODE_API_KEY"].strip()
+          if not vid or not vkey:
               sys.exit("Secrets VERACODE_API_ID e VERACODE_API_KEY precisam estar configurados.")
 
           app_name = os.environ["APP_NAME"]
@@ -112,7 +109,7 @@ jobs:
           threshold = int(os.environ.get("SANDBOX_THRESHOLD", 9))
           target_sandbox = os.environ["TARGET_SANDBOX"]
           base_url = "https://api.veracode.com/appsec/v1"
-          auth = RequestsAuthPluginVeracodeHMAC()
+          auth = RequestsAuthPluginVeracodeHMAC(vid, vkey)
 
           def list_sandboxes():
               # Percorre todas as paginas para manter a contagem correta.
