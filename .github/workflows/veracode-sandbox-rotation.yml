@@ -100,7 +100,35 @@ jobs:
 
           app_id = app.get("app_id")
           sandboxes = list_sandboxes(app_id)
-          print(f"{len(sandboxes)} sandboxes no perfil '{app_name}'.")
+
+          # Sandboxes sem nenhum build não têm scan que possa ser promovido; remova-as primeiro.
+          builds_by_sandbox = {}
+          empty_sandboxes = []
+          for sandbox in sandboxes:
+              sandbox_id = sandbox.get("sandbox_id")
+              sandbox_name = sandbox.get("sandbox_name", "(sem nome)")
+              if not sandbox_id:
+                  sys.exit(f"A sandbox '{sandbox_name}' não trouxe sandbox_id; não é seguro continuar.")
+              builds = elements(
+                  call("getbuildlist", appid=app_id, sandboxid=sandbox_id),
+                  "build"
+              )
+              if builds:
+                  builds_by_sandbox[sandbox_id] = builds
+              else:
+                  empty_sandboxes.append((sandbox_id, sandbox_name))
+
+          for sandbox_id, sandbox_name in empty_sandboxes:
+              print(f"'{sandbox_name}' está vazia; removendo sem promoção.")
+              call("deletesandbox", sandboxid=sandbox_id)
+
+          if empty_sandboxes:
+              sandboxes = list_sandboxes(app_id)
+              remaining_ids = {item.get("sandbox_id") for item in sandboxes}
+              if any(sandbox_id in remaining_ids for sandbox_id, _ in empty_sandboxes):
+                  sys.exit("A Veracode não confirmou a remoção das sandboxes vazias.")
+
+          print(f"{len(sandboxes)} sandboxes após remover as vazias no perfil '{app_name}'.")
 
           if any(item.get("sandbox_name") == target_name for item in sandboxes):
               print(f"Sandbox '{target_name}' já existe; nenhuma rotação necessária.")
@@ -113,39 +141,49 @@ jobs:
           if not sandboxes:
               sys.exit("A API retornou uma lista vazia de sandboxes.")
 
-          oldest = min(sandboxes, key=lambda item: item.get("last_modified", ""))
-          sandbox_id = oldest.get("sandbox_id")
-          sandbox_name = oldest.get("sandbox_name")
-          if not sandbox_id or not sandbox_name or not oldest.get("last_modified"):
-              sys.exit("A resposta não contém sandbox_id, sandbox_name e last_modified.")
+          selected = None
+          for candidate in sorted(sandboxes, key=lambda item: item.get("last_modified", "")):
+              candidate_id = candidate.get("sandbox_id")
+              candidate_name = candidate.get("sandbox_name")
+              if not candidate_id or not candidate_name or not candidate.get("last_modified"):
+                  print("Sandbox sem identificadores/data; ignorada.")
+                  continue
 
-          builds = elements(
-              call("getbuildlist", appid=app_id, sandboxid=sandbox_id),
-              "build"
-          )
-          if not builds:
-              sys.exit(f"'{sandbox_name}' não tem build para promover; sandbox preservada.")
+              builds = builds_by_sandbox.get(candidate_id, [])
+              if not builds:
+                  print(f"'{candidate_name}' não tem builds disponíveis; pulando.")
+                  continue
 
-          latest = max(
-              builds,
-              key=lambda item: (
-                  item.get("policy_updated_date", ""),
-                  int(item.get("build_id", "0"))
+              latest = max(
+                  builds,
+                  key=lambda item: (
+                      item.get("policy_updated_date", ""),
+                      int(item.get("build_id", "0"))
+                  )
               )
-          )
-          build_id = latest.get("build_id")
-          if not build_id:
-              sys.exit(f"Não encontrei build_id para '{sandbox_name}'.")
+              candidate_build_id = latest.get("build_id")
+              if not candidate_build_id:
+                  print(f"'{candidate_name}' não retornou build_id; pulando.")
+                  continue
 
-          build_info = call(
-              "getbuildinfo",
-              appid=app_id,
-              sandboxid=sandbox_id,
-              buildid=build_id
-          )
-          latest_build = next(iter(elements(build_info, "build")), None)
-          if latest_build is None or latest_build.get("results_ready", "false").lower() != "true":
-              sys.exit(f"A análise mais recente de '{sandbox_name}' não está pronta; sandbox preservada.")
+              build_info = call(
+                  "getbuildinfo",
+                  appid=app_id,
+                  sandboxid=candidate_id,
+                  buildid=candidate_build_id
+              )
+              latest_build = next(iter(elements(build_info, "build")), None)
+              if latest_build is None or latest_build.get("results_ready", "false").lower() != "true":
+                  print(f"A análise mais recente de '{candidate_name}' não está pronta; pulando.")
+                  continue
+
+              selected = (candidate, candidate_id, candidate_name, candidate_build_id)
+              break
+
+          if selected is None:
+              sys.exit("Nenhuma sandbox tem análise concluída para promover; nenhuma foi excluída.")
+
+          oldest, sandbox_id, sandbox_name, build_id = selected
 
           print(f"Promovendo '{sandbox_name}' (build {build_id}) para policy.")
           promotion = call("promotesandbox", buildid=build_id)
