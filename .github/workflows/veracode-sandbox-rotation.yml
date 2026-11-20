@@ -9,10 +9,13 @@ on:
         type: string
 
 env:
-  APP_NAME: "Github - ${{ github.repository }}"
-  SANDBOX_THRESHOLD: 9 # Promove a mais antiga se já existirem 9 ou mais sandboxes (limite = 10)
+  APP_NAME: "Github Actions - ${{ github.repository }}"
+  SANDBOX_THRESHOLD: 9 # Abre espaço antes de criar a 10ª sandbox
   PACKAGE_PATH: "veracode.zip"
-  TARGET_SANDBOX: ${{ inputs.sandbox_name || github.ref_name }}
+
+concurrency:
+  group: veracode-sandbox-rotation-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
   veracode-sandbox-scan:
@@ -30,8 +33,8 @@ jobs:
       - name: Garantir existência do Application Profile
         id: ensure_profile
         env:
-          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
-          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
+          VERACODE_API_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY: ${{ secrets.VERACODE_API_KEY }}
         run: |
           pip install requests veracode-api-signing -q
           python3 - << 'EOF'
@@ -40,8 +43,8 @@ jobs:
           import requests
           from veracode_api_signing.plugin_requests import RequestsAuthPluginVeracodeHMAC
 
-          vid = os.environ.get("VERACODE_API_KEY_ID", "").strip()
-          vkey = os.environ.get("VERACODE_API_KEY_SECRET", "").strip()
+          vid = os.environ.get("VERACODE_API_ID", "").strip()
+          vkey = os.environ.get("VERACODE_API_KEY", "").strip()
           if not vid or not vkey:
               print("ERRO: Secrets VERACODE_API_ID ou VERACODE_API_KEY estão vazios ou inacessíveis.", file=sys.stderr)
               sys.exit(1)
@@ -54,7 +57,7 @@ jobs:
           auth = RequestsAuthPluginVeracodeHMAC()
 
           # 1. Consultar se o Application Profile já existe
-          resp = requests.get(f"{base_url}/applications", params={"name": app_name}, auth=auth)
+          resp = requests.get(f"{base_url}/applications", params={"name": app_name}, auth=auth, timeout=30)
           if resp.status_code == 401:
               print("ERRO 401 Unauthorized: Verifique se a chave da Veracode é válida ou se a região da conta é EU/US.", file=sys.stderr)
               sys.exit(1)
@@ -72,7 +75,7 @@ jobs:
                       "business_criticality": "VERY_HIGH"
                   }
               }
-              create_resp = requests.post(f"{base_url}/applications", json=payload, auth=auth)
+              create_resp = requests.post(f"{base_url}/applications", json=payload, auth=auth, timeout=30)
               create_resp.raise_for_status()
               target_app = create_resp.json()
               print(f"Perfil '{app_name}' criado com sucesso!")
@@ -88,9 +91,10 @@ jobs:
 
       - name: Verificar limite de Sandboxes e promover a mais antiga
         env:
-          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
-          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
+          VERACODE_API_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY: ${{ secrets.VERACODE_API_KEY }}
           APP_GUID: ${{ steps.ensure_profile.outputs.app_guid }}
+          TARGET_SANDBOX: ${{ inputs.sandbox_name || github.ref_name }}
         run: |
           python3 - << 'EOF'
           import os
@@ -98,8 +102,10 @@ jobs:
           import requests
           from veracode_api_signing.plugin_requests import RequestsAuthPluginVeracodeHMAC
 
-          os.environ["VERACODE_API_KEY_ID"] = os.environ["VERACODE_API_KEY_ID"].strip()
-          os.environ["VERACODE_API_KEY_SECRET"] = os.environ["VERACODE_API_KEY_SECRET"].strip()
+          os.environ["VERACODE_API_KEY_ID"] = os.environ["VERACODE_API_ID"].strip()
+          os.environ["VERACODE_API_KEY_SECRET"] = os.environ["VERACODE_API_KEY"].strip()
+          if not os.environ["VERACODE_API_KEY_ID"] or not os.environ["VERACODE_API_KEY_SECRET"]:
+              sys.exit("Secrets VERACODE_API_ID e VERACODE_API_KEY precisam estar configurados.")
 
           app_name = os.environ["APP_NAME"]
           app_guid = os.environ["APP_GUID"]
@@ -108,10 +114,19 @@ jobs:
           base_url = "https://api.veracode.com/appsec/v1"
           auth = RequestsAuthPluginVeracodeHMAC()
 
-          # 1. Listar todas as Sandboxes do perfil
-          sb_resp = requests.get(f"{base_url}/applications/{app_guid}/sandboxes", auth=auth)
-          sb_resp.raise_for_status()
-          sandboxes = sb_resp.json().get("_embedded", {}).get("sandboxes", [])
+          def list_sandboxes():
+              # Percorre todas as paginas para manter a contagem correta.
+              next_url = f"{base_url}/applications/{app_guid}/sandboxes"
+              result = []
+              while next_url:
+                  response = requests.get(next_url, auth=auth, timeout=30)
+                  response.raise_for_status()
+                  page = response.json()
+                  result.extend(page.get("_embedded", {}).get("sandboxes", []))
+                  next_url = page.get("_links", {}).get("next", {}).get("href")
+              return result
+
+          sandboxes = list_sandboxes()
 
           total_sb = len(sandboxes)
           print(f"Perfil '{app_name}' | Total de sandboxes ativas: {total_sb}/10")
@@ -126,28 +141,36 @@ jobs:
               sys.exit(0)
 
           # 2. Ordenar da mais antiga para a mais recente
-          sandboxes_sorted = sorted(sandboxes, key=lambda s: s.get("modified", s.get("created", "")))
+          sandboxes_sorted = sorted(sandboxes, key=lambda s: s.get("created", s.get("modified", "")))
           oldest = sandboxes_sorted[0]
-          oldest_id = str(oldest["id"])
+          oldest_id = oldest.get("guid")
+          if not oldest_id:
+              sys.exit("A API não retornou o GUID/ID da sandbox mais antiga.")
           oldest_name = oldest["name"]
-          oldest_date = oldest.get("modified", oldest.get("created"))
+          oldest_date = oldest.get("created", oldest.get("modified"))
 
           print(f"Limite próximo ({total_sb}/{threshold}). Promovendo sandbox mais antiga: '{oldest_name}' (ID: {oldest_id}, Última modificação: {oldest_date})")
 
-          # 3. Promover a sandbox mais antiga diretamente via API da Veracode
+          # Use o endpoint REST: promove a última análise e exclui a sandbox para liberar a vaga.
           promote_resp = requests.post(
-              "https://analysiscenter.veracode.com/api/5.0/promotesandbox.do",
-              params={"sandbox_id": oldest_id},
-              auth=auth
+              f"{base_url}/applications/{app_guid}/sandboxes/{oldest_id}/promote",
+              params={"delete_on_promote": "true"},
+              auth=auth,
+              timeout=30
           )
           promote_resp.raise_for_status()
-          print(promote_resp.text)
 
-          if "<error>" in promote_resp.text:
-              print("Erro retornado pela API da Veracode ao promover sandbox.", file=sys.stderr)
-              sys.exit(1)
-
-          print(f"Sandbox '{oldest_name}' promovida com sucesso! Slot liberado.")
+          # A promocao pode concluir de forma assincrona; aguarda a remocao antes de criar outra sandbox.
+          import time
+          deadline = time.time() + 300
+          while time.time() < deadline:
+              remaining = list_sandboxes()
+              if not any(s.get("guid") == oldest_id for s in remaining):
+                  print(f"Sandbox '{oldest_name}' promovida e removida; vaga liberada.")
+                  break
+              time.sleep(5)
+          else:
+              sys.exit("A promocao foi solicitada, mas a sandbox nao foi removida em 5 minutos.")
           EOF
 
       - name: UploadAndScan SBs
@@ -159,7 +182,7 @@ jobs:
           createprofile: true
           criticality: 'VeryHigh'
           createsandbox: true
-          sandboxname: ${{ env.TARGET_SANDBOX }}
+          sandboxname: ${{ inputs.sandbox_name || github.ref_name }}
           filepath: ${{ env.PACKAGE_PATH }}
           deleteincompletescan: 0
           version: ${{ github.run_id }}
