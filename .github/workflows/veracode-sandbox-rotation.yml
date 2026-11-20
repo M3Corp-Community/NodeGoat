@@ -30,8 +30,8 @@ jobs:
       - name: Garantir existência do Application Profile
         id: ensure_profile
         env:
-          VERACODE_API_KEY_ID: ${{ secrets.VERACODEID }}
-          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODEKEY }}
+          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
         run: |
           pip install requests veracode-api-signing -q
           python3 - << 'EOF'
@@ -40,11 +40,10 @@ jobs:
           import requests
           from veracode_api_signing.plugin_requests import RequestsAuthPluginVeracodeHMAC
 
-          # Validação rápida para evitar 401 silencioso por secret vazio/não herdado
           vid = os.environ.get("VERACODE_API_KEY_ID", "").strip()
           vkey = os.environ.get("VERACODE_API_KEY_SECRET", "").strip()
           if not vid or not vkey:
-              print("ERRO: Secrets VERACODEID ou VERACODEKEY estão vazios ou inacessíveis neste repositório.", file=sys.stderr)
+              print("ERRO: Secrets VERACODE_API_ID ou VERACODE_API_KEY estão vazios ou inacessíveis.", file=sys.stderr)
               sys.exit(1)
 
           os.environ["VERACODE_API_KEY_ID"] = vid
@@ -57,7 +56,7 @@ jobs:
           # 1. Consultar se o Application Profile já existe
           resp = requests.get(f"{base_url}/applications", params={"name": app_name}, auth=auth)
           if resp.status_code == 401:
-              print("ERRO 401 Unauthorized: Verifique se o VERACODEID/VERACODEKEY da organização não expirou ou se a região da conta é EU/US.", file=sys.stderr)
+              print("ERRO 401 Unauthorized: Verifique se a chave da Veracode é válida ou se a região da conta é EU/US.", file=sys.stderr)
               sys.exit(1)
           resp.raise_for_status()
 
@@ -83,15 +82,14 @@ jobs:
           app_guid = target_app["guid"]
           print(f"GUID do perfil: {app_guid}")
 
-          # Exporta o GUID para o próximo step via GITHUB_OUTPUT
           with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
               fh.write(f"app_guid={app_guid}\n")
           EOF
 
       - name: Verificar limite de Sandboxes e promover a mais antiga
         env:
-          VERACODE_API_KEY_ID: ${{ secrets.VERACODEID }}
-          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODEKEY }}
+          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY }}
           APP_GUID: ${{ steps.ensure_profile.outputs.app_guid }}
         run: |
           python3 - << 'EOF'
@@ -110,7 +108,7 @@ jobs:
           base_url = "https://api.veracode.com/appsec/v1"
           auth = RequestsAuthPluginVeracodeHMAC()
 
-          # 1. Listar todas as Sandboxes do perfil usando o GUID obtido na etapa anterior
+          # 1. Listar todas as Sandboxes do perfil
           sb_resp = requests.get(f"{base_url}/applications/{app_guid}/sandboxes", auth=auth)
           sb_resp.raise_for_status()
           sandboxes = sb_resp.json().get("_embedded", {}).get("sandboxes", [])
@@ -155,8 +153,8 @@ jobs:
       - name: UploadAndScan SBs
         uses: veracode/veracode-uploadandscan-action@master
         with:
-          vid: ${{ secrets.VERACODEID }}
-          vkey: ${{ secrets.VERACODEKEY }}
+          vid: ${{ secrets.VERACODE_API_ID }}
+          vkey: ${{ secrets.VERACODE_API_KEY }}
           appname: ${{ env.APP_NAME }}
           createprofile: true
           criticality: 'VeryHigh'
