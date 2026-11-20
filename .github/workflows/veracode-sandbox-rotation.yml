@@ -1,0 +1,123 @@
+name: Veracode Sandbox Rotation & Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      sandbox_name:
+        description: 'Nome da Sandbox (deixe vazio para usar o nome da branch atual)'
+        required: false
+        type: string
+
+env:
+  APP_NAME: "${{ github.repository }}"
+  SANDBOX_THRESHOLD: 9 # Promove a mais antiga se já existirem 9 ou mais sandboxes (limite = 10)
+  PACKAGE_PATH: "veracode.zip"
+  TARGET_SANDBOX: ${{ inputs.sandbox_name || github.ref_name }}
+
+jobs:
+  veracode-sandbox-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Preparar pacote Veracode (ZIP otimizado)
+        run: |
+          zip -r "${{ env.PACKAGE_PATH }}" . -i '*.py' '*.html' '*.htm' '*.asp' '*.cjs' '*.css' '*.ehtml' '*.es' '*.es6' '*.handlebars' '*.hbs' '*.hjs' '*.js' '*.jsx' '*.json' '*.jsp' '*.jspx' '*.java' '*.map' '*.mjs' '*.mustache' '*.ts' '*.tsx' '*.vue' '*.xhtml' '*.lock' '*.module' '*.inc' '*.profile' '*.install' '*.engine' '*.theme' '*.php' '*.php4' '*.php5' '*.php7' '*.phtml' '*.txt' 'pyproject.toml' 'Pipfile' 'Pipfile.lock' 'composer.lock' '*.cs' '*.cshtml' '*.razor' '*.csproj' '*.sln' '*.slnx' '*.props' '*.targets' '*.config' '*.deps.json' '*.asset.json' '*.cob' '*.cbl' '*.cobol' '*.pco' '*.cpy' '*.cls' '*.trg' '*.tgr' '*.trigger' '*.pks' '*.pkb' '*.vfp' '*.cmp' '*.component' '*.evt' '*.app' '*.page' '*.fnc' '*.pck' '*.pls' '*.prc' '*.sql' '*.tpb' '*.tps' '*.vw' '*.bas' '*.frm' '*.frx' '*.ctl' '*.ctx' '*.vbp' '*.vbg' '*.vb' '*.vbs' '*.asa' '*.grp' '*.ocx' '*.rpg' '*.rpg4' '*.rpgle' '*.pf' '*.lf' '*.dspf' '*.prt' '*.icf' '*.sc' '*.scala' '*.groovy' '*.gvy' '*.gy' '*.gsh' '*.pl' '*.pm' '*.plx' '*.pl5' '*.cgi' '*.go' 'go.mod' 'go.sum' 'veracode.json' -x 'node_modules/*' '*/node_modules/*' '.git/*' '*/.git/*' 'dist/*' '*/dist/*' 'bin/*' '*/bin/*' 'obj/*' '*/obj/*' 'packages/*' '*/packages/*' '.vscode/*' '*/.vscode/*' '.idea/*' '*/.idea/*' '*/test/*' '*/tests/*' '*/__tests__/*' '*_test.*' '*_spec.*' '*Test.*' '*Tests.*'
+          ls -lh "${{ env.PACKAGE_PATH }}"
+
+      - name: Baixar Veracode Java API Wrapper
+        run: |
+          WRAPPER_VERSION=$(curl -s https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrapper-java/maven-metadata.xml | grep -oP '(?<=<latest>).*?(?=</latest>)')
+          curl -sS -o veracode-wrapper.jar "https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrapper-java/${WRAPPER_VERSION}/vosp-api-wrapper-java-${WRAPPER_VERSION}.jar"
+
+      - name: Verificar limite de Sandboxes e promover a mais antiga
+        env:
+          VERACODE_API_ID: ${{ secrets.VeracodeID }}
+          VERACODE_API_KEY: ${{ secrets.VeracodeKey }}
+        run: |
+          pip install requests veracode-api-signing -q
+          python3 - << 'EOF'
+          import os
+          import sys
+          import subprocess
+          import requests
+          from veracode_api_signing.plugin_requests import RequestsAuthPluginVeracodeHMAC
+
+          app_name = os.environ["APP_NAME"]
+          threshold = int(os.environ.get("SANDBOX_THRESHOLD", 9))
+          target_sandbox = os.environ["TARGET_SANDBOX"]
+          base_url = "https://api.veracode.com/appsec/v1"
+          auth = RequestsAuthPluginVeracodeHMAC()
+
+          # 1. Buscar o Application Profile pelo nome
+          resp = requests.get(f"{base_url}/applications", params={"name": app_name}, auth=auth)
+          resp.raise_for_status()
+          apps = resp.json().get("_embedded", {}).get("applications", [])
+
+          target_app = next((a for a in apps if a["profile"]["name"] == app_name), None)
+          if not target_app:
+              print(f"Application Profile '{app_name}' não encontrado. Será criado no scan.")
+              sys.exit(0)
+
+          app_guid = target_app["guid"]
+          app_id = target_app["id"]
+          print(f"Perfil encontrado: {app_name} (ID: {app_id} | GUID: {app_guid})")
+
+          # 2. Listar todas as Sandboxes do perfil
+          sb_resp = requests.get(f"{base_url}/applications/{app_guid}/sandboxes", auth=auth)
+          sb_resp.raise_for_status()
+          sandboxes = sb_resp.json().get("_embedded", {}).get("sandboxes", [])
+
+          total_sb = len(sandboxes)
+          print(f"Total de sandboxes ativas: {total_sb}/10")
+
+          # Verifica se a sandbox alvo já existe (não consome novo slot)
+          if any(s["name"] == target_sandbox for s in sandboxes):
+              print(f"A sandbox '{target_sandbox}' já existe. Nenhum slot novo será consumido.")
+              sys.exit(0)
+
+          if total_sb < threshold:
+              print("Dentro do limite seguro. Nenhuma promoção necessária.")
+              sys.exit(0)
+
+          # 3. Ordenar da mais antiga para a mais recente
+          sandboxes_sorted = sorted(sandboxes, key=lambda s: s.get("modified", s.get("created", "")))
+          oldest = sandboxes_sorted[0]
+          oldest_id = str(oldest["id"])
+          oldest_name = oldest["name"]
+          oldest_date = oldest.get("modified", oldest.get("created"))
+
+          print(f"Limite próximo ({total_sb}/{threshold}). Promovendo sandbox mais antiga: '{oldest_name}' (ID: {oldest_id}, Última modificação: {oldest_date})")
+
+          # 4. Promover a sandbox mais antiga para Policy Scan via Wrapper
+          cmd = [
+              "java", "-jar", "veracode-wrapper.jar",
+              "-vid", os.environ["VERACODE_API_ID"],
+              "-vkey", os.environ["VERACODE_API_KEY"],
+              "-action", "promotesandbox",
+              "-sandboxid", oldest_id
+          ]
+          result = subprocess.run(cmd, capture_output=True, text=True)
+          print(result.stdout)
+          if result.returncode != 0:
+              print("Erro ao promover sandbox:", result.stderr, file=sys.stderr)
+              sys.exit(result.returncode)
+
+          print(f"Sandbox '{oldest_name}' promovida com sucesso! Slot liberado.")
+          EOF
+
+      - name: UploadAndScan SBs
+        uses: veracode/veracode-uploadandscan-action@master
+        with:
+          vid: ${{ secrets.VeracodeID }}
+          vkey: ${{ secrets.VeracodeKey }}
+          appname: ${{ env.APP_NAME }}
+          createprofile: true
+          criticality: 'VeryHigh'
+          createsandbox: true
+          sandboxname: ${{ env.TARGET_SANDBOX }}
+          filepath: ${{ env.PACKAGE_PATH }}
+          deleteincompletescan: 0
+          version: ${{ github.run_id }}
