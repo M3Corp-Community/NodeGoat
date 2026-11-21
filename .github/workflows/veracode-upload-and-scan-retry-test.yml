@@ -118,7 +118,9 @@ jobs:
               fi
             fi
 
-            echo "Tentativa ${ATTEMPT} de ${MAX_ATTEMPTS} - Veracode U&S..."
+            VERSION_TAG="${BUILD_VERSION}-try${ATTEMPT}-$(date +%Y%m%d%H%M%S)"
+            echo "Tentativa ${ATTEMPT} de ${MAX_ATTEMPTS} - Veracode U&S (version=${VERSION_TAG})..."
+
             set +e
             java -jar veracode-wrapper.jar \
               -vid "$VERACODE_API_ID" \
@@ -126,7 +128,7 @@ jobs:
               -action uploadandscan \
               -appname "$APP_NAME" \
               -createprofile true \
-              -version "$BUILD_VERSION" \
+              -version "$VERSION_TAG" \
               -filepath "$PACKAGE_PATH" \
               -deleteincompletescan 2 \
               -failbuild true
