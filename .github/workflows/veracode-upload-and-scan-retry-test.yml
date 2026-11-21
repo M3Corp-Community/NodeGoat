@@ -1,0 +1,147 @@
+name: Veracode Upload and Scan Retry (Teste Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_profile:
+        description: 'Nome do Application Profile na Veracode (vazio usa "Github - <repo>")'
+        required: false
+        type: string
+      simular_falha_tentativa_1:
+        description: 'Corromper temporariamente o ZIP na 1ª tentativa para validar o retry?'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  PACKAGE_PATH: "veracode-package.zip"
+  APP_NAME: ${{ inputs.app_profile || format('Github - {0}', github.repository) }}
+
+jobs:
+  veracode-retry-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Preparar pacote Veracode (ZIP otimizado)
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f "${{ env.PACKAGE_PATH }}"
+
+          zip -r "${{ env.PACKAGE_PATH }}" . \
+            -i \
+              '*.py' '*.html' '*.htm' '*.asp' '*.cjs' '*.css' '*.ehtml' '*.es' '*.es6' \
+              '*.handlebars' '*.hbs' '*.hjs' '*.js' '*.jsx' '*.json' '*.jsp' '*.jspx' \
+              '*.java' '*.map' '*.mjs' '*.mustache' '*.ts' '*.tsx' '*.vue' '*.xhtml' \
+              '*.lock' '*.module' '*.inc' '*.profile' '*.install' '*.engine' '*.theme' \
+              '*.php' '*.php4' '*.php5' '*.php7' '*.phtml' '*.txt' \
+              'pyproject.toml' 'Pipfile' 'Pipfile.lock' 'composer.lock' \
+              '*.cs' '*.cshtml' '*.razor' '*.csproj' '*.sln' '*.slnx' '*.props' '*.targets' \
+              '*.config' '*.deps.json' '*.asset.json' \
+              '*.cob' '*.cbl' '*.cobol' '*.pco' '*.cpy' \
+              '*.cls' '*.trg' '*.tgr' '*.trigger' '*.pks' '*.pkb' '*.vfp' '*.cmp' \
+              '*.component' '*.evt' '*.app' '*.page' '*.fnc' '*.pck' '*.pls' '*.prc' \
+              '*.sql' '*.tpb' '*.tps' '*.vw' \
+              '*.bas' '*.frm' '*.frx' '*.ctl' '*.ctx' '*.vbp' '*.vbg' '*.vb' '*.vbs' \
+              '*.asa' '*.grp' '*.ocx' \
+              '*.rpg' '*.rpg4' '*.rpgle' '*.pf' '*.lf' '*.dspf' '*.prt' '*.icf' \
+              '*.sc' '*.scala' '*.groovy' '*.gvy' '*.gy' '*.gsh' \
+              '*.pl' '*.pm' '*.plx' '*.pl5' '*.cgi' '*.go' \
+              'go.mod' 'go.sum' 'veracode.json' \
+            -x \
+              'node_modules/*' '*/node_modules/*' \
+              '.git/*' '*/.git/*' \
+              'dist/*' '*/dist/*' \
+              'bin/*' '*/bin/*' \
+              'obj/*' '*/obj/*' \
+              'packages/*' '*/packages/*' \
+              '.vscode/*' '*/.vscode/*' \
+              '.idea/*' '*/.idea/*' \
+              '*/test/*' '*/tests/*' '*/__tests__/*' \
+              '*_test.*' '*_spec.*' '*Test.*' '*Tests.*'
+
+          ls -lh "${{ env.PACKAGE_PATH }}"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download Veracode API Wrapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          METADATA_URL="https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/maven-metadata.xml"
+          METADATA=$(curl -fsSL "$METADATA_URL")
+          VERSION=$(echo "$METADATA" | grep -oPm1 '(?<=<latest>)[^<]+' || echo "$METADATA" | grep -oPm1 '(?<=<release>)[^<]+' || echo "$METADATA" | grep -oP '(?<=<version>)[^<]+' | tail -1)
+          test -n "$VERSION"
+
+          curl --fail --silent --show-error --location \
+            --output veracode-wrapper.jar \
+            "https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/${VERSION}/vosp-api-wrappers-java-${VERSION}.jar"
+
+          test -s veracode-wrapper.jar
+          java -jar veracode-wrapper.jar -wrapperversion
+
+      - name: Veracode U&S com retry (Validação)
+        shell: bash
+        env:
+          VERACODE_API_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY: ${{ secrets.VERACODE_API_KEY }}
+          APP_NAME: ${{ env.APP_NAME }}
+          BUILD_VERSION: ${{ github.run_number }}
+          PACKAGE_PATH: ${{ env.PACKAGE_PATH }}
+          SIMULAR_FALHA_1: ${{ inputs.simular_falha_tentativa_1 }}
+        run: |
+          set -o pipefail
+
+          MAX_ATTEMPTS=3
+          SLEEP_SECONDS=15
+          ATTEMPT=1
+          BACKUP_ZIP="${PACKAGE_PATH}.valid.bak"
+
+          if [ "$SIMULAR_FALHA_1" = "true" ]; then
+            cp "$PACKAGE_PATH" "$BACKUP_ZIP"
+          fi
+
+          while true; do
+            if [ "$SIMULAR_FALHA_1" = "true" ]; then
+              if [ "$ATTEMPT" -eq 1 ]; then
+                echo "[TESTE] Corrompendo temporariamente '$PACKAGE_PATH' na tentativa 1..."
+                echo "conteudo invalido para teste de retry" > "$PACKAGE_PATH"
+              else
+                echo "[TESTE] Restaurando ZIP válido de '$BACKUP_ZIP' para '$PACKAGE_PATH'..."
+                cp "$BACKUP_ZIP" "$PACKAGE_PATH"
+              fi
+            fi
+
+            echo "Tentativa ${ATTEMPT} de ${MAX_ATTEMPTS} - Veracode U&S..."
+            java -jar veracode-wrapper.jar \
+              -vid "$VERACODE_API_ID" \
+              -vkey "$VERACODE_API_KEY" \
+              -action uploadandscan \
+              -appname "$APP_NAME" \
+              -createprofile true \
+              -version "$BUILD_VERSION" \
+              -filepath "$PACKAGE_PATH" \
+              -deleteincompletescan 2 \
+              -failbuild true
+
+            EXIT_CODE=$?
+            if [ $EXIT_CODE -eq 0 ]; then
+              echo "Veracode U&S concluído com sucesso na tentativa ${ATTEMPT}."
+              break
+            fi
+
+            if [ $ATTEMPT -ge $MAX_ATTEMPTS ]; then
+              echo "Falha no Veracode U&S após ${MAX_ATTEMPTS} tentativas (exit code: ${EXIT_CODE})."
+              exit $EXIT_CODE
+            fi
+
+            echo "Falhou com exit code ${EXIT_CODE}. Aguardando ${SLEEP_SECONDS}s antes de tentar novamente..."
+            sleep "$SLEEP_SECONDS"
+            ATTEMPT=$((ATTEMPT + 1))
+          done

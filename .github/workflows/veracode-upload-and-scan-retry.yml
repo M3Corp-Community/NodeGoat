@@ -2,10 +2,6 @@ name: Veracode Upload and Scan (Retry)
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
 
 env:
   PACKAGE_PATH: "veracode-package.zip"
