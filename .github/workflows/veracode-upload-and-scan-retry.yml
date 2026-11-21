@@ -9,7 +9,7 @@ on:
 
 env:
   PACKAGE_PATH: "veracode-package.zip"
-  APP_NAME: ${{ vars.VERACODE_APP_PROFILE || github.event.repository.name }}
+  APP_NAME: "Github - ${{ github.repository }}"
   VERACODE_TEAMS: ${{ vars.VERACODE_TEAMS || 'DEMOs' }}
 
 jobs:
