@@ -99,7 +99,7 @@ jobs:
           set -o pipefail
 
           MAX_ATTEMPTS=3
-          SLEEP_SECONDS=15
+          SLEEP_SECONDS=10
           ATTEMPT=1
           BACKUP_ZIP="${PACKAGE_PATH}.valid.bak"
 
@@ -107,7 +107,7 @@ jobs:
             cp "$PACKAGE_PATH" "$BACKUP_ZIP"
           fi
 
-          while true; do
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
             if [ "$SIMULAR_FALHA_1" = "true" ]; then
               if [ "$ATTEMPT" -eq 1 ]; then
                 echo "[TESTE] Corrompendo temporariamente '$PACKAGE_PATH' na tentativa 1..."
@@ -119,6 +119,7 @@ jobs:
             fi
 
             echo "Tentativa ${ATTEMPT} de ${MAX_ATTEMPTS} - Veracode U&S..."
+            set +e
             java -jar veracode-wrapper.jar \
               -vid "$VERACODE_API_ID" \
               -vkey "$VERACODE_API_KEY" \
@@ -129,19 +130,21 @@ jobs:
               -filepath "$PACKAGE_PATH" \
               -deleteincompletescan 2 \
               -failbuild true
-
             EXIT_CODE=$?
-            if [ $EXIT_CODE -eq 0 ]; then
+            set -e
+
+            if [ "$EXIT_CODE" -eq 0 ]; then
               echo "Veracode U&S concluído com sucesso na tentativa ${ATTEMPT}."
-              break
+              exit 0
             fi
 
-            if [ $ATTEMPT -ge $MAX_ATTEMPTS ]; then
-              echo "Falha no Veracode U&S após ${MAX_ATTEMPTS} tentativas (exit code: ${EXIT_CODE})."
-              exit $EXIT_CODE
+            if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
+              echo "Tentativa ${ATTEMPT} falhou com exit code ${EXIT_CODE}. Aguardando ${SLEEP_SECONDS}s antes da próxima tentativa..."
+              sleep "$SLEEP_SECONDS"
             fi
 
-            echo "Falhou com exit code ${EXIT_CODE}. Aguardando ${SLEEP_SECONDS}s antes de tentar novamente..."
-            sleep "$SLEEP_SECONDS"
             ATTEMPT=$((ATTEMPT + 1))
           done
+
+          echo "Falha no Veracode U&S após ${MAX_ATTEMPTS} tentativas (último exit code: ${EXIT_CODE})."
+          exit "$EXIT_CODE"
