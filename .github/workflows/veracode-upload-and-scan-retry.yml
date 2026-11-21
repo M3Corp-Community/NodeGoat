@@ -2,10 +2,14 @@ name: Veracode Upload and Scan (Retry)
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
 
 env:
   PACKAGE_PATH: "veracode-package.zip"
-  APP_NAME: "Github - ${{ github.repository }}"
+  APP_NAME: ${{ vars.VERACODE_APP_PROFILE || format('Github - {0}', github.repository) }}
   VERACODE_TEAMS: ${{ vars.VERACODE_TEAMS || 'DEMOs' }}
 
 jobs:
@@ -90,35 +94,40 @@ jobs:
           set -o pipefail
 
           MAX_ATTEMPTS=3
-          SLEEP_SECONDS=15
+          SLEEP_SECONDS=10
           ATTEMPT=1
 
-          while true; do
-            echo "Tentativa ${ATTEMPT} de ${MAX_ATTEMPTS} - Veracode U&S..."
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+            VERSION_TAG="${BUILD_VERSION}-try${ATTEMPT}-$(date +%Y%m%d%H%M%S)"
+            echo "Tentativa ${ATTEMPT} de ${MAX_ATTEMPTS} - Veracode U&S (version=${VERSION_TAG})..."
+
+            set +e
             java -jar veracode-wrapper.jar \
               -vid "$VERACODE_API_ID" \
               -vkey "$VERACODE_API_KEY" \
               -action uploadandscan \
               -appname "$APP_NAME" \
               -createprofile true \
-              -version "$BUILD_VERSION" \
+              -version "$VERSION_TAG" \
               -filepath "$PACKAGE_PATH" \
               -teams "$VERACODE_TEAMS" \
               -deleteincompletescan 2 \
               -failbuild true
-
             EXIT_CODE=$?
-            if [ $EXIT_CODE -eq 0 ]; then
+            set -e
+
+            if [ "$EXIT_CODE" -eq 0 ]; then
               echo "Veracode U&S concluído com sucesso na tentativa ${ATTEMPT}."
-              break
+              exit 0
             fi
 
-            if [ $ATTEMPT -ge $MAX_ATTEMPTS ]; then
-              echo "Falha no Veracode U&S após ${MAX_ATTEMPTS} tentativas (exit code: ${EXIT_CODE})."
-              exit $EXIT_CODE
+            if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
+              echo "Tentativa ${ATTEMPT} falhou com exit code ${EXIT_CODE}. Aguardando ${SLEEP_SECONDS}s antes da próxima tentativa..."
+              sleep "$SLEEP_SECONDS"
             fi
 
-            echo "Falhou com exit code ${EXIT_CODE}. Aguardando ${SLEEP_SECONDS}s antes de tentar novamente..."
-            sleep "$SLEEP_SECONDS"
             ATTEMPT=$((ATTEMPT + 1))
           done
+
+          echo "Falha no Veracode U&S após ${MAX_ATTEMPTS} tentativas (último exit code: ${EXIT_CODE})."
+          exit "$EXIT_CODE"
